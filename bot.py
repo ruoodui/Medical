@@ -7,7 +7,9 @@ from telegram.ext import (
 )
 import telegram
 
-# الحصول على التوكن من متغير البيئة
+# === إعداد مشرف البوت ===
+ADMIN_USER_ID = 193646746  # استبدل برقم التليجرام الخاص بالمشرف
+
 TOKEN = os.getenv("TOKEN")
 if not TOKEN:
     raise ValueError("TOKEN environment variable not set")
@@ -28,7 +30,6 @@ def normalize_text(text):
     text = " ".join(text.split())
     return text
 
-# تحميل ملف البيانات من نفس مسار السكربت
 df = pd.read_excel("doctors.xlsx")
 df.columns = [col.strip() for col in df.columns]
 df.fillna("", inplace=True)
@@ -68,7 +69,19 @@ async def try_edit_message(query, text, reply_markup=None):
         else:
             raise
 
+async def register_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if "users" not in context.bot_data:
+        context.bot_data["users"] = {}
+    users = context.bot_data["users"]
+    if user.id not in users:
+        users[user.id] = {
+            "name": user.full_name,
+            "username": user.username,
+        }
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await register_user(update, context)
     welcome_text = (
         "👋 أهلاً بك في دليل الأطباء.\n"
         "يرجى اختيار التصنيف:\n\n"
@@ -231,6 +244,7 @@ async def show_limited_results(update_or_context, context):
     return SEARCH
 
 async def handle_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await register_user(update, context)
     query = update.message.text.strip().lower()
     category = context.user_data.get("selected_category")
     spec = context.user_data.get("selected_spec")
@@ -264,6 +278,29 @@ async def handle_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     return await show_limited_results(update, context)
 
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id != ADMIN_USER_ID:
+        await update.message.reply_text("❌ ليس لديك صلاحية استخدام هذا الأمر.")
+        return
+
+    users = context.bot_data.get("users", {})
+    total = len(users)
+    if total == 0:
+        await update.message.reply_text("لا يوجد مستخدمين مسجلين بعد.")
+        return
+
+    msg_lines = [f"عدد المستخدمين: {total}\n"]
+    for uid, info in users.items():
+        name = info.get("name", "غير معروف")
+        username = info.get("username")
+        line = f"- {name} (ID: {uid})"
+        if username:
+            line += f" - @{username}"
+        msg_lines.append(line)
+
+    await update.message.reply_text("\n".join(msg_lines))
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("تم إنهاء المحادثة، شكراً لاستخدامك البوت.")
     return ConversationHandler.END
@@ -286,6 +323,7 @@ def main():
     )
 
     app.add_handler(conv_handler)
+    app.add_handler(CommandHandler("stats", stats))
     app.run_polling()
 
 if __name__ == "__main__":
