@@ -1,4 +1,6 @@
 import os
+import io
+import csv
 import pandas as pd
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -194,6 +196,33 @@ async def handle_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "show_more":
         return await show_limited_results(update, context)
 
+    elif data == "export_users":
+        user_id = query.from_user.id
+        if user_id != ADMIN_USER_ID:
+            await query.message.reply_text("❌ ليس لديك صلاحية استخدام هذا الأمر.")
+            return
+
+        users = context.bot_data.get("users", {})
+        if not users:
+            await query.message.reply_text("لا يوجد مستخدمين مسجلين بعد.")
+            return
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["user_id", "name", "username"])
+
+        for uid, info in users.items():
+            writer.writerow([uid, info.get("name", ""), info.get("username", "")])
+
+        output.seek(0)
+
+        await query.message.reply_document(
+            document=io.BytesIO(output.getvalue().encode("utf-8")),
+            filename="users.csv",
+            caption="ملف المستخدمين"
+        )
+        return
+
 async def show_limited_results(update_or_context, context):
     results = context.user_data.get("search_results", [])
     offset = context.user_data.get("result_offset", 0)
@@ -245,7 +274,7 @@ async def show_limited_results(update_or_context, context):
 
 async def handle_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await register_user(update, context)
-    query = update.message.text.strip().lower()
+    query = normalize_text(update.message.text.strip())
     category = context.user_data.get("selected_category")
     spec = context.user_data.get("selected_spec")
     search_field = context.user_data.get("search_field")
@@ -286,20 +315,15 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     users = context.bot_data.get("users", {})
     total = len(users)
-    if total == 0:
-        await update.message.reply_text("لا يوجد مستخدمين مسجلين بعد.")
-        return
 
-    msg_lines = [f"عدد المستخدمين: {total}\n"]
-    for uid, info in users.items():
-        name = info.get("name", "غير معروف")
-        username = info.get("username")
-        line = f"- {name} (ID: {uid})"
-        if username:
-            line += f" - @{username}"
-        msg_lines.append(line)
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("تصدير المستخدمين (CSV)", callback_data="export_users")]
+    ])
 
-    await update.message.reply_text("\n".join(msg_lines))
+    await update.message.reply_text(
+        f"عدد المستخدمين المسجلين: {total}",
+        reply_markup=keyboard
+    )
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("تم إنهاء المحادثة، شكراً لاستخدامك البوت.")
